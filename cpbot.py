@@ -11,11 +11,14 @@ class CF:
   @staticmethod
   def get(loc, param={}):
     cfhost = 'https://codeforces.com/api'
-    return requests.get(url=cfhost+loc, params=param).json()['result']
+    return requests.get(url=cfhost+loc, params=param, timeout=10).json().get('result', None)
 
   @staticmethod
   def userRating(handle):
-    return CF.get('/user.info', {'handles': handle})[0]['rating']
+    ret = CF.get('/user.info', {'handles': handle})
+    if ret == None:
+      return None
+    return ret[0]['rating']
 
   @staticmethod
   def allProblems():
@@ -23,15 +26,16 @@ class CF:
 
   @staticmethod
   def checkAC(handle: str, cid: int, pidx: str):
-    ret = CF.get('/user.status', {'handle': handle, 'count': 10})
+    ret = CF.get('/user.status', {'handle': handle, 'count': 50})
+    if ret == None:
+      return None
     ret = list(filter(lambda x:
                       x['verdict'] == "OK"
                       and x['contestId'] == cid
                       and x['problem']['index'] == pidx, ret))
     if len(ret) == 0:
-      return None
+      return -1
     return ret[-1]['creationTimeSeconds']
-    # r = map(lambda x: x['contestId']
 
 
 
@@ -155,6 +159,9 @@ class DbConn:
   def getInvitedDuel(self, qid: int):
     return self._execute(f'SELECT * FROM `duel` WHERE `status`=0 AND `player2`={qid}').fetchone()
 
+  def getInvitingDuel(self, qid: int):
+    return self._execute(f'SELECT * FROM `duel` WHERE `status`=0 AND `player1`={qid}').fetchone()
+
   def setDuelWinner(self, duel_id: int, winner: int):
     self._execute(f'UPDATE `duel` SET `winner`={winner} WHERE `duel_id`={duel_id}')
 
@@ -185,7 +192,7 @@ class DbConn:
     return self._execute(query).fetchall()
 
   def handleExist(self, handle: str):
-    query = f"SELECT COUNT(*) FROM `user` WHERE `cfhandle`='{handle}'";
+    query = f"SELECT COUNT(*) FROM `user` WHERE `cfhandle`='{handle}'"
     ret = self._execute(query).fetchone()['COUNT(*)']
     return ret > 0
 
@@ -218,6 +225,8 @@ class Bot:
     qid = int(txt[1])
     handle = txt[2]
     rt = CF.userRating(handle)
+    if rt == None:
+      return "'timeout. unable to access codeforces.'"
     if db.handleExist(handle):
       return "the handle is already used"
     elif rt == None:
@@ -265,7 +274,9 @@ class Bot:
     r1, r2 = p1['rating'], p2['rating']
     if lo == 0 and hi == 0:
       lo, hi = min(r1, r2), max(r1, r2)
-    p = self.db.getProblem(lo-500, hi+200)
+      lo = lo-500
+      hi = hi+200
+    p = self.db.getProblem(lo, hi)
     if p == None:
       return f'not proper task of difficulty [{lo}, {hi}] found.'
     duel_id = self.db.createDuel(p['contest_id'], p['index'], p['rating'], sender, enemy)
@@ -274,10 +285,9 @@ class Bot:
 
   def duel_accept(self, sender: int):
     duel = self.db.getInvitedDuel(sender)
-    if duel['duel_id'] == None:
+    if duel == None:
       return 'you are not invited by anyone'
     p1, p2 = int(duel['player1']), int(duel['player2'])
-    c1, c2 = self.db.getUser(p1)['cfhandle'], self.db.getUser(p2)['cfhandle']
     duel_id = duel['duel_id']
     self.db.putInDuel(p1, duel_id)
     self.db.putInDuel(p2, duel_id)
@@ -298,7 +308,9 @@ class Bot:
     winner = None
     for x in duelers:
       y = CF.checkAC(x['cfhandle'], duel['p_contest_id'], duel['p_index'])
-      if y != None:
+      if y == None:
+        return 'timeout. unable to access codeforces.'
+      elif y != -1:
         if fastest == None or fastest > y:
           winner = x
           fastest = y
@@ -326,6 +338,16 @@ class Bot:
   @staticmethod
   def cqat(qid: int):
     return f'[CQ:at,qq={qid}]'
+
+  def duel_cancel(self, sender: int):
+    duel = self.db.getInvitingDuel(sender)
+    if duel == None:
+      return 'you are not inviting anyone'
+    p1 = self.db.getUser(duel['player1'])
+    p2 = self.db.getUser(duel['player2'])
+    self.db.updateDuelStatus(duel['duel_id'])
+    return f"Duel{duel['duel_id']} between [{Bot.cqat(p1['qid'])}] and [{Bot.cqat(p2['qid'])}] is now cancelled"
+
 
   def duel_decline(self, sender: int):
     duel = self.db.getInvitedDuel(sender)
@@ -387,7 +409,7 @@ class Bot:
         enemy = int(x.group(1))
       else:
         enemy = self.db.getQid(txt[3])
-      ret = self.duel_invite(sender, enemy) if enemy != None else 'not found'
+      ret = self.duel_invite(sender, enemy, lo, hi) if enemy != None else 'not found'
     elif len(txt) == 1 and txt[0] == 'check':
       ret = self.check_duel(sender)
     elif len(txt) == 1 and txt[0] == 'skip':
@@ -396,6 +418,8 @@ class Bot:
       ret = self.get_info(sender)
     elif len(txt) == 1 and txt[0] == 'decline':
       ret = self.duel_decline(sender)
+    elif len(txt) == 1 and txt[0] == 'cancel':
+      ret = self.duel_cancel(sender)
     if ret != '':
       self.sendGrpMsg(gid, ret)
 
