@@ -225,6 +225,8 @@ class Bot:
 
   def gimme(self, sender: int, difficulty=0):
     usr = self.db.getUser(sender)
+    if usr == None:
+      return 'bind your cf handle first'
     if difficulty == 0:
       p = self.db.getProblem(usr['rating']-200, usr['rating']+200)
     else:
@@ -235,28 +237,48 @@ class Bot:
             f'difficulty: {p["rating"]}\n'
             f'https://codeforces.com/contest/{p["contest_id"]}/problem/{p["index"]}')
 
-  def duel_invite(self, sender: int, enemy: int):
+  def duel_invite(self, sender: int, enemy: int, lo=0, hi=0):
+    if sender == enemy:
+      return "?"
     p1 = self.db.getUser(sender)
+    if p1 == None:
+      return 'bind your cf handle first'
     if p1['in_duel_id'] != None:
       return 'you have a duel in-progress'
+    if self.db.getInvitedDuel(sender) != None:
+      duel = self.db.getInvitedDuel(sender)
+      return (f"you are currently being invited on Duel{duel['duel_id']},"
+             f" which involve [{Bot.cqat(duel['player1'])}] and [{Bot.cqat(duel['player2'])})].")
     p2 = self.db.getUser(enemy)
+    if p2 == None:
+      return 'they have not bind their cf handle yet'
     if p2['in_duel_id'] != None:
       return 'they have a duel in-progress'
+    if self.db.getInvitedDuel(enemy) != None:
+      duel = self.db.getInvitedDuel(enemy)
+      return (f"they are currently being invited on Duel{duel['duel_id']},"
+             f" which involve [{Bot.cqat(duel['player1'])}] and [{Bot.cqat(duel['player2'])})].")
     r1, r2 = p1['rating'], p2['rating']
-    lo, hi = min(r1, r2), max(r1, r2)
+    if lo == 0 and hi == 0:
+      lo, hi = min(r1, r2), max(r1, r2)
     p = self.db.getProblem(lo-500, hi+200)
+    if p == None:
+      return f'not proper task of difficulty [{lo}, {hi}] found.'
     duel_id = self.db.createDuel(p['contest_id'], p['index'], p['rating'], sender, enemy)
-    return f'invitation to {self.db.getUser(enemy)["cfhandle"]} sent'
+    return (f'invitation to {self.db.getUser(enemy)["cfhandle"]} sent\n'
+            f'duel difficulty is [{p["rating"]}]')
 
   def duel_accept(self, sender: int):
     duel = self.db.getInvitedDuel(sender)
-    p1, p2 = duel['player1'], duel['player2']
+    if duel['duel_id'] == None:
+      return 'you are not invited by anyone'
+    p1, p2 = int(duel['player1']), int(duel['player2'])
     c1, c2 = self.db.getUser(p1)['cfhandle'], self.db.getUser(p2)['cfhandle']
     duel_id = duel['duel_id']
     self.db.putInDuel(p1, duel_id)
     self.db.putInDuel(p2, duel_id)
-    self.db.createEvent(p1['qid'], 0)
-    self.db.createEvent(p2['qid'], 0)
+    self.db.createEvent(p1, 0)
+    self.db.createEvent(p2, 0)
     self.db.updateDuelStatus(duel_id)
     return (f'ok, {c1} and {c2} are now in duel.\n'
             f'task: https://codeforces.com/contest/{duel["p_contest_id"]}/problem/{duel["p_index"]}')
@@ -291,19 +313,24 @@ class Bot:
     self.db.createEvent(winner['qid'], 1)
     self.db.setDuelWinner(duel_id, winner['qid'])
 
-    return (f'on Duel{duel["duel_id"]}: [{winner["cfhandle"]}] VS [{loser["cfhandle"]}]\n'
+    return (f'on Duel{duel["duel_id"]}: [{winner["cfhandle"]}] VS [{loser["cfhandle"]}({loser["rating"]})]\n'
             f'winner: {winner["cfhandle"]}\n'
             f'time: {timedelta(seconds=fastest-int(duel["duel_time"]))}\n'
-            f'rating: {winner["rating"]} → {winner["rating"]+delta} (Δ: +{delta})')
+            f'rating: {winner["rating"]} → {winner["rating"]+delta} (Δ: +{delta})\n'
+            f'{Bot.cqat(loser["qid"])}]')
+
+  @staticmethod
+  def cqat(qid: int):
+    return f'[CQ:at,qq={qid}]'
 
   def duel_decline(self, sender: int):
     duel = self.db.getInvitedDuel(sender)
     if duel == None:
-      return 'you are not in duel'
+      return 'you are not being invited'
     p1 = self.db.getUser(duel['player1'])
     p2 = self.db.getUser(duel['player2'])
     self.db.updateDuelStatus(duel['duel_id'])
-    return f"Duel{duel['duel_id']} between [{p1['cfhandle']}] and [{p2['cfhandle']}] is now rejected"
+    return f"Duel{duel['duel_id']} between [{Bot.cqat(p1['qid'])}] and [{Bot.cqat(p2['qid'])}] is now rejected"
 
   def duel_skip(self, sender: int):
     duel_id = self.db.getDuelId(sender)
@@ -317,12 +344,13 @@ class Bot:
 
   def get_info(self, sender: int):
     user = self.db.getUser(sender)
+    if user == None:
+      return 'bind your cf handle first'
     win = self.db.getEventCount(sender, 1)
     skip = self.db.getEventCount(sender, 2)
     tot = self.db.getEventCount(sender, 0)
     return (f"{user['cfhandle']}({user['rating']})\n"
-            f"duel: {win}/{skip}/{tot}")
-
+            f"duel: {win} wins,{skip} skips, {tot} total")
 
   def process(self, gid: int, sender: int, text: str):
     txt = text.split()
@@ -331,16 +359,30 @@ class Bot:
       return
     elif len(txt) == 3 and txt[0] == 'bind':
       ret = self.bindUser(sender, txt)
+    elif len(txt) == 1 and txt[0] == 'ping':
+      ret = "pong!"
     elif len(txt) == 1 and txt[0] == 'gimme':
       ret = self.gimme(sender)
     elif len(txt) == 2 and txt[0] == 'gimme':
       ret = self.gimme(sender, txt[1])
-    elif len(txt) == 1 and txt[0] == 'ping':
-      ret = "pong!"
     elif len(txt) == 1 and txt[0] == 'accept':
       ret = self.duel_accept(sender)
     elif len(txt) == 2 and txt[0] == 'duel':
-      ret = self.duel_invite(sender, txt[1])
+      x = re.match(r"\[CQ:at,qq=(\d+)\]", txt[1])
+      if x == None:
+        ret = 'not found'
+      else:
+        enemy = int(x.group(1))
+        ret = self.duel_invite(sender, enemy)
+
+    elif len(txt) == 4 and txt[0] == 'duel':
+      lo, hi = int(txt[1]), int(txt[2])
+      x = re.match(r"\[CQ:at,qq=(\d+)\]", txt[3])
+      if x == None:
+        ret = 'not found'
+      else:
+        enemy = int(x.group(1))
+        ret = self.duel_invite(sender, enemy, lo, hi)
     elif len(txt) == 1 and txt[0] == 'check':
       ret = self.check_duel(sender)
     elif len(txt) == 1 and txt[0] == 'skip':
@@ -365,6 +407,7 @@ if __name__ == '__main__':
 
   db = DbConn()
   bot = Bot(config, db)
+  db.initDB()
 
   app = Flask(__name__)
   @app.route('/', methods=["POST"])
