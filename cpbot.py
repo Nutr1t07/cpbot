@@ -148,6 +148,10 @@ class DbConn:
              'VALUES (?, ?, ?, ?, ?)')
     return self._execute(query, (cid, pidx, pdfc, p1, p2)).lastrowid
 
+  def getQid(self, cfhandle: str):
+    ret = self._execute(f'SELECT `qid` FROM `user` WHERE `cfhandle`="{cfhandle}"').fetchone()
+    return int(ret['qid']) if ret != None else None
+
   def getInvitedDuel(self, qid: int):
     return self._execute(f'SELECT * FROM `duel` WHERE `status`=0 AND `player2`={qid}').fetchone()
 
@@ -280,7 +284,7 @@ class Bot:
     self.db.createEvent(p1, 0)
     self.db.createEvent(p2, 0)
     self.db.updateDuelStatus(duel_id)
-    return (f'ok, {c1} and {c2} are now in duel.\n'
+    return (f'ok, [{Bot.cqat(p1)}] and [{Bot.cqat(p2)}] are now in duel.\n'
             f'task: https://codeforces.com/contest/{duel["p_contest_id"]}/problem/{duel["p_index"]}')
 
   def check_duel(self, sender: int):
@@ -317,7 +321,7 @@ class Bot:
             f'winner: {winner["cfhandle"]}\n'
             f'time: {timedelta(seconds=fastest-int(duel["duel_time"]))}\n'
             f'rating: {winner["rating"]} → {winner["rating"]+delta} (Δ: +{delta})\n'
-            f'{Bot.cqat(loser["qid"])}]')
+            f'[{Bot.cqat(loser["qid"])}]')
 
   @staticmethod
   def cqat(qid: int):
@@ -368,21 +372,22 @@ class Bot:
     elif len(txt) == 1 and txt[0] == 'accept':
       ret = self.duel_accept(sender)
     elif len(txt) == 2 and txt[0] == 'duel':
+      enemy = None
       x = re.match(r"\[CQ:at,qq=(\d+)\]", txt[1])
-      if x == None:
-        ret = 'not found'
-      else:
+      if x != None:
         enemy = int(x.group(1))
-        ret = self.duel_invite(sender, enemy)
-
+      else:
+        enemy = self.db.getQid(txt[1])
+      ret = self.duel_invite(sender, enemy) if enemy != None else 'not found'
     elif len(txt) == 4 and txt[0] == 'duel':
       lo, hi = int(txt[1]), int(txt[2])
+      enemy = None
       x = re.match(r"\[CQ:at,qq=(\d+)\]", txt[3])
-      if x == None:
-        ret = 'not found'
-      else:
+      if x != None:
         enemy = int(x.group(1))
-        ret = self.duel_invite(sender, enemy, lo, hi)
+      else:
+        enemy = self.db.getQid(txt[3])
+      ret = self.duel_invite(sender, enemy) if enemy != None else 'not found'
     elif len(txt) == 1 and txt[0] == 'check':
       ret = self.check_duel(sender)
     elif len(txt) == 1 and txt[0] == 'skip':
