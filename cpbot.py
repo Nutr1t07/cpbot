@@ -250,7 +250,7 @@ class Bot:
             f'difficulty: {p["rating"]}\n'
             f'https://codeforces.com/contest/{p["contest_id"]}/problem/{p["index"]}')
 
-  def duel_invite(self, sender: int, enemy: int, lo=0, hi=0):
+  def duel_invite(self, sender: int, enemy: int, lo=0, hi=0, at=False):
     if sender == enemy:
       return "?"
     p1 = self.db.getUser(sender)
@@ -280,7 +280,7 @@ class Bot:
     if p == None:
       return f'not proper task of difficulty [{lo}, {hi}] found.'
     duel_id = self.db.createDuel(p['contest_id'], p['index'], p['rating'], sender, enemy)
-    return (f'invitation to {self.db.getUser(enemy)["cfhandle"]} sent\n'
+    return (f'invitation to {Bot.cqat(enemy) if at else self.db.getUser(enemy)["cfhandle"]} sent\n'
             f'duel difficulty is [{p["rating"]}]')
 
   def duel_accept(self, sender: int):
@@ -394,22 +394,24 @@ class Bot:
     elif len(txt) == 1 and txt[0] == 'accept':
       ret = self.duel_accept(sender)
     elif len(txt) == 2 and txt[0] == 'duel':
-      enemy = None
+      enemy, at = None, False
       x = re.match(r"\[CQ:at,qq=(\d+)\]", txt[1])
       if x != None:
         enemy = int(x.group(1))
       else:
         enemy = self.db.getQid(txt[1])
-      ret = self.duel_invite(sender, enemy) if enemy != None else 'not found'
+        at = True
+      ret = self.duel_invite(sender, enemy, at=at) if enemy != None else 'not found'
     elif len(txt) == 4 and txt[0] == 'duel':
       lo, hi = int(txt[1]), int(txt[2])
-      enemy = None
+      enemy, at = None, False
       x = re.match(r"\[CQ:at,qq=(\d+)\]", txt[3])
       if x != None:
         enemy = int(x.group(1))
       else:
         enemy = self.db.getQid(txt[3])
-      ret = self.duel_invite(sender, enemy, lo, hi) if enemy != None else 'not found'
+        at = True
+      ret = self.duel_invite(sender, enemy, lo, hi, at) if enemy != None else 'not found'
     elif len(txt) == 1 and txt[0] == 'check':
       ret = self.check_duel(sender)
     elif len(txt) == 1 and txt[0] == 'skip':
