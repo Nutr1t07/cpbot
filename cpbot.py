@@ -2,7 +2,6 @@ import json
 from datetime import datetime, timedelta, timezone
 import sqlite3
 import requests
-import math
 import re
 
 from flask import request, Flask
@@ -137,6 +136,9 @@ class DbConn:
              'VALUES (?, ?)')
     self._execute(query, (qid, status))
 
+  def updDuelTime(self, duel_id:int):
+    self._execute(f'UPDATE `duel` SET `duel_time`={datetime.now(timezone.utc).timestamp()} WHERE `duel_id`={duel_id}')
+
   def getEventCount(self, qid: int, status: int):
     return self._execute(f'SELECT COUNT(*) FROM `event` WHERE `qid`={qid} AND `status`={status}').fetchone()['COUNT(*)']
 
@@ -153,7 +155,7 @@ class DbConn:
     return self._execute(query, (cid, pidx, pdfc, p1, p2)).lastrowid
 
   def getQid(self, cfhandle: str):
-    ret = self._execute(f'SELECT `qid` FROM `user` WHERE `cfhandle`="{cfhandle}"').fetchone()
+    ret = self._execute(f'SELECT `qid` FROM `user` WHERE LOWER(`cfhandle`)="{cfhandle.lower()}"').fetchone()
     return int(ret['qid']) if ret != None else None
 
   def getWinRound(self, winner: int, loser: int):
@@ -200,7 +202,7 @@ class DbConn:
     return self._execute(query).fetchall()
 
   def handleExist(self, handle: str):
-    query = f"SELECT COUNT(*) FROM `user` WHERE `cfhandle`='{handle}'"
+    query = f"SELECT COUNT(*) FROM `user` WHERE LOWER(`cfhandle`)='{handle.lower()}'"
     ret = self._execute(query).fetchone()['COUNT(*)']
     return ret > 0
 
@@ -302,6 +304,7 @@ class Bot:
     self.db.createEvent(p1, 0)
     self.db.createEvent(p2, 0)
     self.db.updateDuelStatus(duel_id)
+    self.db.updDuelTime(duel_id)
     return (f'ok, [{Bot.cqat(p1)}] and [{Bot.cqat(p2)}] are now in duel.\n'
             f'task: https://codeforces.com/contest/{duel["p_contest_id"]}/problem/{duel["p_index"]}')
 
