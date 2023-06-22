@@ -156,6 +156,14 @@ class DbConn:
     ret = self._execute(f'SELECT `qid` FROM `user` WHERE `cfhandle`="{cfhandle}"').fetchone()
     return int(ret['qid']) if ret != None else None
 
+  def getWinRound(self, winner: int, loser: int):
+    return (self._execute(f'SELECT COUNT(*) FROM `duel` WHERE (`winner`={winner}) AND ((`player1`={winner} AND `player2`={loser}) OR (`player2`={winner} AND `player1`={loser}))')
+               .fetchone()['COUNT(*)'])
+
+  def getDuelAvgDifficulty(self, p1: int, p2: int):
+    return int(self._execute(f'SELECT AVG(`p_difficulty`) FROM `duel` WHERE ((`player1`={p1} AND `player2`={p2}) OR (`player2`={p1} AND `player1`={p2}))')
+               .fetchone()['AVG(`p_difficulty`)'])
+
   def getInvitedDuel(self, qid: int):
     return self._execute(f'SELECT * FROM `duel` WHERE `status`=0 AND `player2`={qid}').fetchone()
 
@@ -357,6 +365,7 @@ class Bot:
     p2 = self.db.getUser(duel['player2'])
     self.db.updateDuelStatus(duel['duel_id'])
     return f"Duel{duel['duel_id']} between [{Bot.cqat(p1['qid'])}] and [{Bot.cqat(p2['qid'])}] is now rejected"
+    
 
   def duel_skip(self, sender: int):
     duel_id = self.db.getDuelId(sender)
@@ -378,6 +387,22 @@ class Bot:
     return (f"{user['cfhandle']}({user['rating']})\n"
             f"duel: {win} wins,{skip} skips, {tot} total")
 
+  @staticmethod
+  def getQidFromAt(s: str):
+    x = re.match(r"\[CQ:at,qq=(\d+)\]", s)
+    if x == None:
+      return None
+    return int(x.group(1))
+
+  def duel_history(self, p1: int, p2: int):
+    u1, u2 = self.db.getUser(p1), self.db.getUser(p2)
+    p1win = self.db.getWinRound(p1, p2)
+    p2win = self.db.getWinRound(p2, p1)
+    avgd = self.db.getDuelAvgDifficulty(p1, p2)
+    return (f"{u1['cfhandle']}({u1['rating']}) - {u2['cfhandle']}({u2['rating']})\n"
+            f"score: {p1win}-{p2win}\n"
+            f"avg. dc.: {avgd}")
+
   def process(self, gid: int, sender: int, text: str):
     txt = text.split()
     ret = ''
@@ -393,6 +418,16 @@ class Bot:
       ret = self.gimme(sender, txt[1])
     elif len(txt) == 1 and txt[0] == 'accept':
       ret = self.duel_accept(sender)
+    elif len(txt) == 4 and txt[0] == 'duel' and txt[1] == 'history':
+      p1 = Bot.getQidFromAt(txt[2])
+      p1 = self.db.getQid(txt[2]) if p1 == None else p1
+      p2 = Bot.getQidFromAt(txt[3])
+      p2 = self.db.getQid(txt[3]) if p2 == None else p2
+      if p1 == None:
+        ret = f'{txt[2]} not found'
+      if p2 == None:
+        ret = f'{txt[3]} not found'
+      ret = self.duel_history(p1, p2)
     elif len(txt) == 2 and txt[0] == 'duel':
       enemy, at = None, False
       x = re.match(r"\[CQ:at,qq=(\d+)\]", txt[1])
